@@ -18,6 +18,7 @@
 #include "edhoc/suites.h"
 #include "edhoc/signature_or_mac_msg.h"
 #include "edhoc/bstr_encode_decode.h"
+#include "edhoc/int_encode_decode.h"
 
 #include "common/print_util.h"
 #include "common/crypto_wrapper.h"
@@ -32,6 +33,7 @@
  * 				data items and computes a MAC over it.
  * 
  * @param[in] prk 		The key to be used for the mac.
+ * @param[in] c_r 		Connection identifier of the requester
  * @param[in] th 		Transcript hash.
  * @param[in] id_cred 		ID of the credential.
  * @param[in] cred 		The credential.
@@ -42,38 +44,40 @@
  * @param[out] mac 		The computed mac.
  * @return 			Ok or error code.
  */
-static enum err mac(const struct byte_array *prk, const struct byte_array *th,
+static enum err mac(const struct byte_array *prk, const struct byte_array *c_r,
+		    const struct byte_array *th,
 		    const struct byte_array *id_cred,
 		    const struct byte_array *cred, const struct byte_array *ead,
 		    enum info_label mac_label, bool static_dh,
 		    struct suite *suite, struct byte_array *mac)
 {
 	/*encode th as bstr*/
-	BYTE_ARRAY_NEW(th_enc, HASH_SIZE + 2, th->len + 2);
-
+	BYTE_ARRAY_NEW(th_enc, AS_BSTR_SIZE(HASH_SIZE), AS_BSTR_SIZE(th->len));
 	TRY(encode_bstr(th, &th_enc));
 
 	/**/
 	BYTE_ARRAY_NEW(context_mac, CONTEXT_MAC_SIZE,
-		       id_cred->len + cred->len + ead->len + th_enc.len);
-
-	TRY(_memcpy_s(context_mac.ptr, context_mac.len, id_cred->ptr,
-		      id_cred->len));
-
-	TRY(_memcpy_s((context_mac.ptr + id_cred->len),
-		      (context_mac.len - id_cred->len), th_enc.ptr,
-		      th_enc.len));
-
-	TRY(_memcpy_s((context_mac.ptr + id_cred->len + th_enc.len),
-		      (context_mac.len - id_cred->len - th_enc.len), cred->ptr,
-		      cred->len));
+		       AS_BSTR_SIZE(c_r->len) + id_cred->len + cred->len +
+			       ead->len + th_enc.len);
+	uint32_t capacity = context_mac.len;
+	context_mac.len = 0;
+	if (c_r->len != 0) {
+		BYTE_ARRAY_NEW(c_r_enc, AS_BSTR_SIZE(C_R_SIZE),
+			       AS_BSTR_SIZE(c_r->len));
+		if (c_r_is_raw_int(c_r)) {
+			TRY(encode_int((const int32_t *)c_r->ptr, c_r->len,
+				       &c_r_enc));
+		} else {
+			TRY(encode_bstr(c_r, &c_r_enc));
+		}
+		TRY(byte_array_append(&context_mac, &c_r_enc, capacity));
+	}
+	TRY(byte_array_append(&context_mac, id_cred, capacity));
+	TRY(byte_array_append(&context_mac, &th_enc, capacity));
+	TRY(byte_array_append(&context_mac, cred, capacity));
 
 	if (0 < ead->len) {
-		TRY(_memcpy_s((context_mac.ptr + id_cred->len + th_enc.len +
-			       cred->len),
-			      (context_mac.len - id_cred->len - th_enc.len -
-			       cred->len),
-			      ead->ptr, ead->len));
+		TRY(byte_array_append(&context_mac, ead, capacity));
 	}
 
 	PRINT_ARRAY("MAC context", context_mac.ptr, context_mac.len);
@@ -109,13 +113,14 @@ static enum err signature_struct_gen(const struct byte_array *th,
 				     const struct byte_array *mac,
 				     struct byte_array *out)
 {
-	BYTE_ARRAY_NEW(th_enc, HASH_SIZE + 2, HASH_SIZE + 2);
+	BYTE_ARRAY_NEW(th_enc, AS_BSTR_SIZE(HASH_SIZE),
+		       AS_BSTR_SIZE(HASH_SIZE));
 
 	TRY(encode_bstr(th, &th_enc));
 
-	BYTE_ARRAY_NEW(
-		tmp, (CRED_MAX_SIZE + HASH_SIZE + EAD_SIZE + ENCODING_OVERHEAD),
-		(th_enc.len + cred->len + ead->len));
+	BYTE_ARRAY_NEW(tmp,
+		       (CRED_MAX_SIZE + AS_BSTR_SIZE(HASH_SIZE) + EAD_SIZE),
+		       (th_enc.len + cred->len + ead->len));
 
 	memcpy(tmp.ptr, th_enc.ptr, th_enc.len);
 	memcpy(tmp.ptr + th_enc.len, cred->ptr, cred->len);
@@ -135,14 +140,14 @@ static enum err signature_struct_gen(const struct byte_array *th,
 enum err
 signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 		 const struct byte_array *sk, const struct byte_array *pk,
-		 const struct byte_array *prk, const struct byte_array *th,
-		 const struct byte_array *id_cred,
+		 const struct byte_array *prk, const struct byte_array *c_r,
+		 const struct byte_array *th, const struct byte_array *id_cred,
 		 const struct byte_array *cred, const struct byte_array *ead,
 		 enum info_label mac_label, struct byte_array *signature_or_mac)
 {
 	if (op == GENERATE) {
 		/*we always calculate the mac*/
-		TRY(mac(prk, th, id_cred, cred, ead, mac_label, static_dh,
+		TRY(mac(prk, c_r, th, id_cred, cred, ead, mac_label, static_dh,
 			suite, signature_or_mac));
 
 		if (static_dh) {
@@ -150,13 +155,14 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			return ok;
 		} else {
 			PRINTF("SIG_STRUCT_SIZE: %d\n", SIG_STRUCT_SIZE);
-			BYTE_ARRAY_NEW(sign_struct, SIG_STRUCT_SIZE,
-				       th->len + 2 + COSE_SIGN1_STR_LEN +
-					       id_cred->len + cred->len +
-					       ead->len +
-					       signature_or_mac->len +
-					       ENCODING_OVERHEAD);
+			uint32_t sig_struct_size = SIG_STRUCT_SIZE_CALC(
+				COSE_SIGN1_STR_LEN, id_cred->len,
+				(AS_BSTR_SIZE(th->len) + cred->len + ead->len),
+				signature_or_mac->len);
 
+			PRINTF("sig_struct_size: %d\n", sig_struct_size);
+			BYTE_ARRAY_NEW(sign_struct, SIG_STRUCT_SIZE,
+				       sig_struct_size);
 			TRY(signature_struct_gen(th, id_cred, cred, ead,
 						 signature_or_mac,
 						 &sign_struct));
@@ -174,7 +180,7 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 		BYTE_ARRAY_NEW(_mac, HASH_SIZE,
 			       get_hash_len(suite->edhoc_hash));
 
-		TRY(mac(prk, th, id_cred, cred, ead, mac_label, static_dh,
+		TRY(mac(prk, c_r, th, id_cred, cred, ead, mac_label, static_dh,
 			suite, &_mac));
 
 		if (static_dh) {
@@ -186,24 +192,27 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			}
 
 		} else {
-			BYTE_ARRAY_NEW(signature_struct, SIG_STRUCT_SIZE,
-				       th->len + 2 + COSE_SIGN1_STR_LEN +
-					       id_cred->len + cred->len +
-					       ead->len + _mac.len +
-					       ENCODING_OVERHEAD);
+			PRINTF("SIG_STRUCT_SIZE: %d\n", SIG_STRUCT_SIZE);
+			uint32_t sig_struct_size = SIG_STRUCT_SIZE_CALC(
+				COSE_SIGN1_STR_LEN, id_cred->len,
+				(AS_BSTR_SIZE(th->len) + cred->len + ead->len),
+				_mac.len);
 
+			PRINTF("sig_struct_size: %d\n", sig_struct_size);
+			BYTE_ARRAY_NEW(sign_struct, SIG_STRUCT_SIZE,
+				       sig_struct_size);
 			TRY(signature_struct_gen(th, id_cred, cred, ead, &_mac,
-						 &signature_struct));
+						 &sign_struct));
 
 			bool result;
 			PRINT_ARRAY("pk", pk->ptr, pk->len);
-			PRINT_ARRAY("signature_struct", signature_struct.ptr,
-				    signature_struct.len);
+			PRINT_ARRAY("signature_struct", sign_struct.ptr,
+				    sign_struct.len);
 			PRINT_ARRAY("signature_or_mac", signature_or_mac->ptr,
 				    signature_or_mac->len);
 
 			TRY(verify(suite->edhoc_sign, pk,
-				   (struct const_byte_array *)&signature_struct,
+				   (struct const_byte_array *)&sign_struct,
 				   (struct const_byte_array *)signature_or_mac,
 				   &result));
 			if (!result) {

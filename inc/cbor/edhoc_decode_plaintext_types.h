@@ -1,5 +1,5 @@
 /*
- * Generated using zcbor version 0.8.0
+ * Generated using zcbor version 0.8.99
  * https://github.com/NordicSemiconductor/zcbor
  * Generated with a --default-max-qty of 3
  */
@@ -24,6 +24,17 @@ extern "C" {
  *  See `zcbor --help` for more information about --default-max-qty
  */
 #define DEFAULT_MAX_QTY 3
+
+struct plaintext_C_R_r {
+	union {
+		int32_t plaintext_C_R_int;
+		struct zcbor_string plaintext_C_R_bstr;
+	};
+	enum {
+		plaintext_C_R_int_c,
+		plaintext_C_R_bstr_c,
+	} plaintext_C_R_choice;
+};
 
 struct map_kid_r {
 	union {
@@ -106,6 +117,8 @@ struct map {
 };
 
 struct plaintext {
+	struct plaintext_C_R_r plaintext_C_R;
+	bool plaintext_C_R_present;
 	union {
 		struct map plaintext_ID_CRED_x_map_m;
 		struct zcbor_string plaintext_ID_CRED_x_bstr;

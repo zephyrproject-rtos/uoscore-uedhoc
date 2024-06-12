@@ -154,35 +154,14 @@ static inline enum err msg2_encode(const struct byte_array *g_y,
 				   const struct byte_array *ciphertext_2,
 				   struct byte_array *msg2)
 {
-	size_t payload_len_out;
-	struct m2 m;
-
-	BYTE_ARRAY_NEW(g_y_ciphertext_2, G_Y_SIZE + CIPHERTEXT2_SIZE,
+	BYTE_ARRAY_NEW(g_y_ciphertext_2, G_Y_CIPHERTEXT_2,
 		       g_y->len + ciphertext_2->len);
 
 	memcpy(g_y_ciphertext_2.ptr, g_y->ptr, g_y->len);
 	memcpy(g_y_ciphertext_2.ptr + g_y->len, ciphertext_2->ptr,
 	       ciphertext_2->len);
 
-	/*Encode g_y_ciphertext_2*/
-	m.m2_G_Y_CIPHERTEXT_2.value = g_y_ciphertext_2.ptr;
-	m.m2_G_Y_CIPHERTEXT_2.len = g_y_ciphertext_2.len;
-
-	/*Encode C_R*/
-	PRINT_ARRAY("C_R", c_r->ptr, c_r->len);
-	if (c_r->len == 1 && (c_r->ptr[0] < 0x18 ||
-			      (0x1F < c_r->ptr[0] && c_r->ptr[0] <= 0x37))) {
-		m.m2_C_R_choice = m2_C_R_int_c;
-		TRY(decode_int(c_r, &m.m2_C_R_int));
-	} else {
-		m.m2_C_R_choice = m2_C_R_bstr_c;
-		m.m2_C_R_bstr.value = c_r->ptr;
-		m.m2_C_R_bstr.len = c_r->len;
-	}
-
-	TRY_EXPECT(cbor_encode_m2(msg2->ptr, msg2->len, &m, &payload_len_out),
-		   0);
-	msg2->len = (uint32_t)payload_len_out;
+	TRY(encode_bstr(&g_y_ciphertext_2, msg2));
 
 	PRINT_ARRAY("message_2 (CBOR Sequence)", msg2->ptr, msg2->len);
 	return ok;
@@ -216,8 +195,7 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 	/******************* create and send message 2*************************/
 	BYTE_ARRAY_NEW(th2, HASH_SIZE, get_hash_len(rc->suite.edhoc_hash));
 	TRY(hash(rc->suite.edhoc_hash, &rc->msg, &rc->msg1_hash));
-	TRY(th2_calculate(rc->suite.edhoc_hash, &rc->msg1_hash, &c->g_y,
-			  &c->c_r, &th2));
+	TRY(th2_calculate(rc->suite.edhoc_hash, &rc->msg1_hash, &c->g_y, &th2));
 
 	/*calculate the DH shared secret*/
 	BYTE_ARRAY_NEW(g_xy, ECDH_SECRET_SIZE, ECDH_SECRET_SIZE);
@@ -239,17 +217,17 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 		       get_signature_len(rc->suite.edhoc_sign));
 
 	TRY(signature_or_mac(GENERATE, static_dh_r, &rc->suite, &c->sk_r,
-			     &c->pk_r, &rc->prk_3e2m, &th2, &c->id_cred_r,
-			     &c->cred_r, &c->ead_2, MAC_2, &sign_or_mac_2));
+			     &c->pk_r, &rc->prk_3e2m, &c->c_r, &th2,
+			     &c->id_cred_r, &c->cred_r, &c->ead_2, MAC_2,
+			     &sign_or_mac_2));
 
 	/*compute ciphertext_2*/
 	BYTE_ARRAY_NEW(plaintext_2, PLAINTEXT2_SIZE,
-		       c->id_cred_r.len + sign_or_mac_2.len +
-			       SIG_OR_MAC_SIZE_ENCODING_OVERHEAD +
-			       c->ead_2.len);
+		       AS_BSTR_SIZE(c->c_r.len) + c->id_cred_r.len +
+			       AS_BSTR_SIZE(sign_or_mac_2.len) + c->ead_2.len);
 	BYTE_ARRAY_NEW(ciphertext_2, CIPHERTEXT2_SIZE, plaintext_2.len);
 
-	TRY(ciphertext_gen(CIPHERTEXT2, &rc->suite, &c->id_cred_r,
+	TRY(ciphertext_gen(CIPHERTEXT2, &rc->suite, &c->c_r, &c->id_cred_r,
 			   &sign_or_mac_2, &c->ead_2, &PRK_2e, &th2,
 			   &ciphertext_2, &plaintext_2));
 
@@ -290,7 +268,7 @@ enum err msg3_process(struct edhoc_responder_context *c,
 		       ctxt3.len);
 #endif
 
-	TRY(ciphertext_decrypt_split(CIPHERTEXT3, &rc->suite, &id_cred_i,
+	TRY(ciphertext_decrypt_split(CIPHERTEXT3, &rc->suite, NULL, &id_cred_i,
 				     &sign_or_mac, &rc->ead, &rc->prk_3e2m,
 				     &rc->th3, &ctxt3, &ptxt3));
 
@@ -317,8 +295,8 @@ enum err msg3_process(struct edhoc_responder_context *c,
 	PRINT_ARRAY("prk_4e3m", rc->prk_4e3m.ptr, rc->prk_4e3m.len);
 
 	TRY(signature_or_mac(VERIFY, rc->static_dh_i, &rc->suite, NULL, &pk,
-			     &rc->prk_4e3m, &rc->th3, &id_cred_i, &cred_i,
-			     &rc->ead, MAC_3, &sign_or_mac));
+			     &rc->prk_4e3m, &NULL_ARRAY, &rc->th3, &id_cred_i,
+			     &cred_i, &rc->ead, MAC_3, &sign_or_mac));
 
 	/*TH4*/
 	// ptxt3.len = ptxt3.len - get_aead_mac_len(rc->suite.edhoc_aead);
@@ -343,7 +321,8 @@ enum err msg4_gen(struct edhoc_responder_context *c, struct runtime_context *rc)
 #endif
 
 	TRY(ciphertext_gen(CIPHERTEXT4, &rc->suite, &NULL_ARRAY, &NULL_ARRAY,
-			   &c->ead_4, &rc->prk_4e3m, &rc->th4, &ctxt4, &ptxt4));
+			   &NULL_ARRAY, &c->ead_4, &rc->prk_4e3m, &rc->th4,
+			   &ctxt4, &ptxt4));
 
 	TRY(encode_bstr(&ctxt4, &rc->msg));
 

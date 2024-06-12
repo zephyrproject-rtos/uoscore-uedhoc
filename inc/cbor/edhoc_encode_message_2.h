@@ -1,5 +1,5 @@
 /*
- * Generated using zcbor version 0.8.0
+ * Generated using zcbor version 0.8.99
  * https://github.com/NordicSemiconductor/zcbor
  * Generated with a --default-max-qty of 3
  */
@@ -22,9 +22,9 @@ extern "C" {
 #endif
 
 
-int cbor_encode_m2(
+int cbor_encode_m2_G_Y_CIPHERTEXT_2(
 		uint8_t *payload, size_t payload_len,
-		const struct m2 *input,
+		const struct zcbor_string *input,
 		size_t *payload_len_out);
 
 

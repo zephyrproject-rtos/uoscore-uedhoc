@@ -15,6 +15,7 @@
 #include "edhoc/retrieve_cred.h"
 #include "edhoc/plaintext.h"
 #include "edhoc/signature_or_mac_msg.h"
+#include "edhoc/int_encode_decode.h"
 
 #include "common/oscore_edhoc_error.h"
 #include "common/memcpy_s.h"
@@ -76,7 +77,8 @@ static enum err id_cred_x_encode(enum id_cred_x_label label, int algo,
 	return ok;
 }
 
-enum err plaintext_split(struct byte_array *ptxt, struct byte_array *id_cred_x,
+enum err plaintext_split(struct byte_array *ptxt, struct byte_array *c_r,
+			 struct byte_array *id_cred_x,
 			 struct byte_array *sign_or_mac, struct byte_array *ad)
 {
 	size_t decode_len = 0;
@@ -84,6 +86,24 @@ enum err plaintext_split(struct byte_array *ptxt, struct byte_array *id_cred_x,
 
 	TRY_EXPECT(cbor_decode_plaintext(ptxt->ptr, ptxt->len, &p, &decode_len),
 		   0);
+
+	/*C_R is present only in plaintext 2*/
+	if (c_r != NULL && p.plaintext_C_R_present == true) {
+		if (p.plaintext_C_R.plaintext_C_R_choice ==
+		    plaintext_C_R_bstr_c) {
+			TRY(_memcpy_s(c_r->ptr, c_r->len,
+				      p.plaintext_C_R.plaintext_C_R_bstr.value,
+				      (uint32_t)p.plaintext_C_R
+					      .plaintext_C_R_bstr.len));
+			c_r->len =
+				(uint32_t)p.plaintext_C_R.plaintext_C_R_bstr.len;
+		} else {
+			/*provide C_R in encoded form if it was an int*/
+			/*this is how it C_R was chosen by the responder*/
+			TRY(encode_int(&p.plaintext_C_R.plaintext_C_R_int, 1,
+				       c_r));
+		}
+	}
 
 	/*ID_CRED_x*/
 	if (p.plaintext_ID_CRED_x_choice == plaintext_ID_CRED_x_map_m_c) {
@@ -104,8 +124,8 @@ enum err plaintext_split(struct byte_array *ptxt, struct byte_array *id_cred_x,
 				x5t,
 				p.plaintext_ID_CRED_x_map_m.map_x5t
 					.map_x5t_alg_int,
-				p.plaintext_ID_CRED_x_map_m.map_x5t
-					.map_x5t_hash.value,
+				p.plaintext_ID_CRED_x_map_m.map_x5t.map_x5t_hash
+					.value,
 				(uint32_t)p.plaintext_ID_CRED_x_map_m.map_x5t
 					.map_x5t_hash.len,
 				id_cred_x));
