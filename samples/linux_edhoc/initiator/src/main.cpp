@@ -22,13 +22,14 @@ extern "C" {
 #include "edhoc.h"
 #include "sock.h"
 #include "edhoc_test_vectors_p256_v16.h"
+#include "edhoc_test_vectors_rfc9529.h"
 }
 #include "cantcoap.h"
 
 #define USE_IPV4
 //#define USE_IPV6
 /*comment this out to use DH keys from the test vectors*/
-#define USE_RANDOM_EPHEMERAL_DH_KEY
+//#define USE_RANDOM_EPHEMERAL_DH_KEY
 
 /**
  * @brief	Initializes sockets for CoAP client.
@@ -41,7 +42,6 @@ static int start_coap_client(int *sockfd)
 #ifdef USE_IPV4
 	struct sockaddr_in servaddr;
 	const char IPV4_SERVADDR[] = { "127.0.0.1" };
-	//const char IPV4_SERVADDR[] = { "172.31.24.45" };
 	err = sock_init(SOCK_CLIENT, IPV4_SERVADDR, IPv4, &servaddr,
 			sizeof(servaddr), sockfd);
 	if (err < 0) {
@@ -91,7 +91,10 @@ enum err tx(void *sock, struct byte_array *data)
 	pdu->setURI((char *)".well-known/edhoc", 17);
 	pdu->setPayload(data->ptr, data->len);
 
-	send(*((int *)sock), pdu->getPDUPointer(), pdu->getPDULength(), 0);
+	const void *data_ptr = pdu->getPDUPointer();
+	size_t len = pdu->getPDULength();
+
+	send(*((int *)sock), data_ptr, len, 0);
 
 	delete pdu;
 	return ok;
@@ -148,6 +151,9 @@ int main()
 	struct other_party_cred cred_r;
 	struct edhoc_initiator_context c_i;
 
+#define ORIG
+#ifdef ORIG
+
 	uint8_t TEST_VEC_NUM = 1;
 	uint8_t vec_num_i = TEST_VEC_NUM - 1;
 
@@ -190,6 +196,49 @@ int main()
 	cred_r.ca.ptr = (uint8_t *)test_vectors[vec_num_i].ca_r;
 	cred_r.ca_pk.len = test_vectors[vec_num_i].ca_r_pk_len;
 	cred_r.ca_pk.ptr = (uint8_t *)test_vectors[vec_num_i].ca_r_pk;
+#endif
+
+#ifdef T1_RFC9529
+	c_i.sock = &sockfd;
+	c_i.c_i.len = T1_RFC9529__C_I_LEN;
+	c_i.c_i.ptr = (uint8_t *)T1_RFC9529__C_I;
+	c_i.method = (enum method_type)T1_RFC9529__METHOD;
+	c_i.suites_i.len = T1_RFC9529__SUITES_I_LEN;
+	c_i.suites_i.ptr = (uint8_t *)T1_RFC9529__SUITES_I;
+	c_i.ead_1.len = 0;
+	c_i.ead_1.ptr = NULL;
+	c_i.ead_3.len = 0;
+	c_i.ead_3.ptr = NULL;
+	c_i.id_cred_i.len = T1_RFC9529__ID_CRED_I_LEN;
+	c_i.id_cred_i.ptr = (uint8_t *)T1_RFC9529__ID_CRED_I;
+	c_i.cred_i.len = T1_RFC9529__CRED_I_LEN;
+	c_i.cred_i.ptr = (uint8_t *)T1_RFC9529__CRED_I;
+	c_i.g_x.len = T1_RFC9529__G_X_LEN;
+	c_i.g_x.ptr = (uint8_t *)T1_RFC9529__G_X;
+	c_i.x.len = T1_RFC9529__X_LEN;
+	c_i.x.ptr = (uint8_t *)T1_RFC9529__X;
+	c_i.g_i.len = 0;
+	c_i.g_i.ptr = NULL;
+	c_i.i.len = 0;
+	c_i.i.ptr = NULL;
+	c_i.sk_i.len = T1_RFC9529__SK_I_LEN;
+	c_i.sk_i.ptr = (uint8_t *)T1_RFC9529__SK_I;
+	c_i.pk_i.len = T1_RFC9529__PK_I_LEN;
+	c_i.pk_i.ptr = (uint8_t *)T1_RFC9529__PK_I;
+	cred_r.id_cred.len = T1_RFC9529__ID_CRED_R_LEN;
+	cred_r.id_cred.ptr = (uint8_t *)T1_RFC9529__ID_CRED_R;
+	cred_r.cred.len = T1_RFC9529__CRED_R_LEN;
+	cred_r.cred.ptr = (uint8_t *)T1_RFC9529__CRED_R;
+	cred_r.g.len = 0;
+	cred_r.g.ptr = NULL;
+	cred_r.pk.len = T1_RFC9529__PK_R_LEN;
+	cred_r.pk.ptr = (uint8_t *)T1_RFC9529__PK_R;
+	cred_r.ca.len = 0;
+	cred_r.ca.ptr = NULL;
+	cred_r.ca_pk.len = 0;
+	cred_r.ca_pk.ptr = NULL;
+
+#endif
 
 	struct cred_array cred_r_array = { .len = 1, .ptr = &cred_r };
 
@@ -206,7 +255,7 @@ int main()
 	PRINT_ARRAY("seed", (uint8_t *)&seed, seed_len);
 
 	/*create ephemeral DH keys from seed*/
-	TRY(ephemeral_dh_key_gen(P256, seed, &X_random, &G_X_random));
+	TRY(ephemeral_dh_key_gen(X25519, seed, &X_random, &G_X_random));
 	c_i.g_x.ptr = G_X_random.ptr;
 	c_i.g_x.len = G_X_random.len;
 	c_i.x.ptr = X_random.ptr;

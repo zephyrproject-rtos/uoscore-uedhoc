@@ -8,6 +8,7 @@
 # except according to those terms.
 
 include ../../../makefile_config.mk
+ROOT_DIR := ../../..
 
 # toolchain
 CXX ?= g++
@@ -52,6 +53,7 @@ $(shell mv ../../../externals/tinycrypt/lib/source/sha256.c ../../../externals/t
 C_SOURCES += src/_entropy.c
 C_SOURCES += $(wildcard ../../common/*.c)
 C_SOURCES += $(wildcard ../../../externals/zcbor/src/*.c)
+C_SOURCES += $(wildcard ../../../test_vectors/*.c)
 
 # Crypto engine dependent source files
 ifeq ($(findstring COMPACT25519,$(CRYPTO_ENGINE)),COMPACT25519) 
@@ -129,6 +131,7 @@ CXXFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
 
 # required for gddl-gen library
 CFLAGS += -DZCBOR_CANONICAL 
+#CFLAGS += -DZCBOR_VERBOSE
 
 # use linux sockets 
 CFLAGS += -DLINUX_SOCKETS
