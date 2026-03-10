@@ -25,10 +25,12 @@ BUILD_DIR = build
 USOCORE_UEDHOC_PATH = ../../../
 USOCORE_UEDHOC_BUILD_PATH = $(USOCORE_UEDHOC_PATH)build
 
+ifeq ($(ARCH_32_ONLY), 1)
 # build for 32 bit x68 
 # export the varible so that it is availbale in the uoscore-uedhoc Makefile 
 ARCH = -m32
 export ARCH
+endif
 
 # debug build?
 DEBUG = 1
@@ -103,8 +105,8 @@ LDFLAGS += $(ARCH)
 # CFLAGS
 ##########################################
 #general c flags
-CFLAGS +=  $(ARCH) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall
-CXXFLAGS +=  $(ARCH) $(C_DEFS) $(C_INCLUDES) $(OPT)
+CFLAGS +=  $(ARCH) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -Werror
+CXXFLAGS +=  $(ARCH) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -Werror
 
 # have dubug information
 ifeq ($(DEBUG), 1)
