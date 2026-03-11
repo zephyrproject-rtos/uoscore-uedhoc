@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
  */
 
+#include <string.h>
 #include <psa/crypto.h>
 #include <edhoc/buffer_sizes.h>
 #include "crypto_p256.h"
@@ -260,8 +261,8 @@ static uint64_t u32_muladd64(uint32_t x, uint32_t y, uint32_t z, uint32_t t)
 	/* x = xl + 2**16 xh, y = yl + 2**16 yh */
 	const uint16_t xl = (uint16_t) x;
 	const uint16_t yl = (uint16_t) y;
-	const uint16_t xh = x >> 16;
-	const uint16_t yh = y >> 16;
+	const uint16_t xh = (uint16_t)(x >> 16);
+	const uint16_t yh = (uint16_t)(y >> 16);
 
 	/* x*y = xl*yl + 2**16 (xh*yl + yl*yh) + 2**32 xh*yh
 	 *     = lo    + 2**16 (m1    + m2   ) + 2**32 hi    */
@@ -599,55 +600,6 @@ static void m256_set32(uint32_t z[8], uint32_t x, const m256_mod *mod)
 {
 	u256_set32(z, x);
 	m256_prep(z, mod);
-}
-
-/*
- * Modular inversion in Montgomery form
- *
- * in: x in [0, m)
- *     mod must point to a valid m256_mod structure
- *     such that mod->m % 2^32 >= 2, assumed to be public.
- * out: z = x^-1 * 2^512 mod m if x != 0,
- *      z = 0 if x == 0
- * That is, if x = x_actual    * 2^256 mod m, then
- *             z = x_actual^-1 * 2^256 mod m
- *
- * Note: as a memory area, z may overlap with x.
- */
-static void m256_inv(uint32_t z[8], const uint32_t x[8],
-					 const m256_mod *mod)
-{
-	/*
-	 * Use Fermat's little theorem to compute x^-1 as x^(m-2).
-	 *
-	 * Take advantage of the fact that both p's and n's least significant limb
-	 * is at least 2 to perform the subtraction on the flight (no carry).
-	 *
-	 * Use plain right-to-left binary exponentiation;
-	 * branches are OK as the exponent is not a secret.
-	 */
-	uint32_t bitval[8];
-	u256_cmov(bitval, x, 1);    /* copy x before writing to z */
-
-	m256_set32(z, 1, mod);
-
-	unsigned i = 0;
-	uint32_t limb = mod->m[i] - 2;
-	while (1) {
-		for (unsigned j = 0; j < 32; j++) {
-			if ((limb & 1) != 0) {
-				m256_mul(z, z, bitval, mod);
-			}
-			m256_mul(bitval, bitval, bitval, mod);
-			limb >>= 1;
-		}
-
-		if (i == 7)
-			break;
-
-		i++;
-		limb = mod->m[i];
-	}
 }
 
 /*
