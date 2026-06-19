@@ -39,6 +39,71 @@ enum err aead(enum aes_operation op, const struct byte_array *in,
 	      const struct byte_array *aad, struct byte_array *out,
 	      struct byte_array *tag);
 
+#ifdef MBEDTLS
+#include <psa/crypto.h>
+
+/**
+ * @brief			AEAD using an already-resident PSA key.
+ *
+ * Identical to aead() except the key is identified by a PSA key id and is
+ * neither imported nor destroyed here. This lets OSCORE use opaque/derived
+ * keys whose bytes never enter the non-secure domain. MBEDTLS builds only.
+ *
+ * @param op			Operation to be executed (ENCRYPT or DECRYPT).
+ * @param[in] in		Input message.
+ * @param key_id		PSA key id of the AEAD key to use.
+ * @param[in] nonce		The nonce.
+ * @param[in] aad		Additional authenticated data.
+ * @param[out] out		The cipher text / plaintext.
+ * @param[in,out] tag		The authentication tag.
+ * @return			Ok or error code.
+ */
+enum err aead_with_key_id(enum aes_operation op, const struct byte_array *in,
+			  psa_key_id_t key_id, struct byte_array *nonce,
+			  const struct byte_array *aad, struct byte_array *out,
+			  struct byte_array *tag);
+
+/**
+ * @brief			Derives an OSCORE AEAD (Sender/Recipient) key.
+ *
+ * Runs HKDF-SHA-256 with the master secret as the secret input and returns the
+ * result as a volatile PSA key handle. The key material is created directly
+ * inside the PSA/secure domain and is never copied to the non-secure domain.
+ * MBEDTLS builds only.
+ *
+ * @param master_secret_id	PSA derive key (PSA_KEY_TYPE_DERIVE) holding the
+ *				OSCORE master secret (HKDF secret input).
+ * @param[in] salt		OSCORE master salt (HKDF salt). May be empty.
+ * @param[in] info		OSCORE HKDF info (CBOR-encoded).
+ * @param bits			Derived key size in bits (128 for AES-CCM-16-64-128).
+ * @param aead_alg		PSA AEAD algorithm the derived key may be used with.
+ * @param[out] out_key_id	Receives the volatile derived-key handle.
+ * @return			Ok or error code.
+ */
+enum err oscore_derive_aead_key(psa_key_id_t master_secret_id,
+				const struct byte_array *salt,
+				const struct byte_array *info, size_t bits,
+				psa_algorithm_t aead_alg,
+				psa_key_id_t *out_key_id);
+
+/**
+ * @brief			Derives the OSCORE Common IV into plain bytes.
+ *
+ * Same HKDF-SHA-256 derivation as oscore_derive_aead_key() but outputs raw
+ * bytes; the Common IV is public so byte output is intentional. MBEDTLS only.
+ *
+ * @param master_secret_id	PSA derive key holding the OSCORE master secret.
+ * @param[in] salt		OSCORE master salt (HKDF salt). May be empty.
+ * @param[in] info		OSCORE HKDF info (CBOR-encoded).
+ * @param[out] out		Receives the derived bytes; out->len produced.
+ * @return			Ok or error code.
+ */
+enum err oscore_derive_iv_bytes(psa_key_id_t master_secret_id,
+				const struct byte_array *salt,
+				const struct byte_array *info,
+				struct byte_array *out);
+#endif /* MBEDTLS */
+
 /**
  * @brief			Derives ECDH shared secret.
  * 

@@ -13,6 +13,18 @@
 #define ERROR_H
 #include "print_util.h"
 
+/* The OSCORE security context holds key material as opaque PSA key handles
+ * (instead of raw byte arrays) when built against the PSA / Mbed TLS backend.
+ * This changes the layout of structs SHARED between the library and the
+ * application (oscore_init_params, struct context), so both translation units
+ * must agree. The library is compiled with MBEDTLS defined; application code
+ * that includes these public headers inside a Zephyr/NCS build does not see
+ * MBEDTLS but does see CONFIG_UOSCORE / CONFIG_UEDHOC (via autoconf.h).
+ * Deriving the switch from either keeps app and library layouts in sync. */
+#if defined(MBEDTLS) || defined(CONFIG_UOSCORE) || defined(CONFIG_UEDHOC)
+#define OSCORE_PSA_OPAQUE_KEYS 1
+#endif
+
 /* All possible errors that EDHOC and OSCORE can have */
 enum err {
 	/*common errors*/

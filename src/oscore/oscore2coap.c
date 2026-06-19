@@ -299,7 +299,11 @@ decrypt_wrapper(struct byte_array *ciphertext, struct byte_array *plaintext,
 
 	/* Decrypt the ciphertext */
 	TRY(oscore_cose_decrypt(ciphertext, plaintext, &nonce, &aad,
+#ifdef MBEDTLS
+				c->rc.recipient_key_id));
+#else
 				&c->rc.recipient_key));
+#endif
 
 	/* Update nonce only after successful decryption (for handling future responses) */
 	if (NULL != new_nonce_oscore_option) {

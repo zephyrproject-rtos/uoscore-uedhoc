@@ -555,7 +555,11 @@ static enum err encrypt_wrapper(struct byte_array *plaintext,
 
 	/* Encrypt the plaintext */
 	TRY(oscore_cose_encrypt(plaintext, ciphertext, &nonce, &aad,
+#ifdef MBEDTLS
+				c->sc.sender_key_id));
+#else
 				&c->sc.sender_key));
+#endif
 
 	/* Update nonce only after successful encryption (for handling future responses). */
 	if (use_new_piv) {

@@ -66,8 +66,19 @@
  * small set of input parameters.
  */
 struct oscore_init_params {
-	/*master_secret must be provided. Currently 16 byte secrets are supported*/
+	/*master_secret must be provided. Currently 16 byte secrets are supported.
+	  On MBEDTLS builds it may be left empty if master_secret_id is set.*/
 	const struct byte_array master_secret;
+#ifdef OSCORE_PSA_OPAQUE_KEYS
+	/* Optional opaque PSA key holding the master secret (PSA_KEY_TYPE_DERIVE,
+	   HKDF-SHA-256, usage DERIVE). When set (!= PSA_KEY_ID_NULL) the raw
+	   master_secret bytes are ignored and all key derivation happens inside
+	   the secure domain. When PSA_KEY_ID_NULL (e.g. the EDHOC path), the
+	   master_secret bytes are imported into a temporary volatile derive key.
+	   Note: leaving this field unset in a designated initializer yields
+	   PSA_KEY_ID_NULL (0), preserving legacy/EDHOC behaviour. */
+	const psa_key_id_t master_secret_id;
+#endif
 	/*sender_id must be provided*/
 	const struct byte_array sender_id;
 	/*recipient_id must be provided*/

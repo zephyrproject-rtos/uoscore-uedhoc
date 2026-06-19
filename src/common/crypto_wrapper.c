@@ -170,6 +170,43 @@ aead_mock_args_match_predefined(struct edhoc_mock_aead_in_out *predefined,
 }
 #endif // EDHOC_MOCK_CRYPTO_WRAPPER
 
+#ifdef MBEDTLS
+/* Core PSA AEAD operation shared by the byte-key path (aead) and the key-id
+   path (aead_with_key_id). Operates on an existing PSA key and does NOT import
+   or destroy it, so opaque/derived keys keep their bytes inside the secure
+   domain. psa_crypto_init() must have been called beforehand. */
+static enum err psa_aead_core(enum aes_operation op, psa_key_id_t key_id,
+			      const struct byte_array *in,
+			      struct byte_array *nonce,
+			      const struct byte_array *aad,
+			      struct byte_array *out, struct byte_array *tag)
+{
+	psa_algorithm_t alg =
+		PSA_ALG_AEAD_WITH_SHORTENED_TAG(PSA_ALG_CCM, (uint32_t)tag->len);
+
+	if (op == DECRYPT) {
+		size_t out_len_re = 0;
+		TRY_EXPECT_PSA(psa_aead_decrypt(key_id, alg, nonce->ptr,
+						nonce->len, aad->ptr, aad->len,
+						in->ptr, in->len, out->ptr,
+						out->len, &out_len_re),
+			       PSA_SUCCESS, PSA_KEY_ID_NULL,
+			       unexpected_result_from_ext_lib);
+	} else {
+		size_t out_len_re;
+		TRY_EXPECT_PSA(psa_aead_encrypt(key_id, alg, nonce->ptr,
+						nonce->len, aad->ptr, aad->len,
+						in->ptr, in->len, out->ptr,
+						(size_t)(in->len + tag->len),
+						&out_len_re),
+			       PSA_SUCCESS, PSA_KEY_ID_NULL,
+			       unexpected_result_from_ext_lib);
+		memcpy(tag->ptr, out->ptr + out_len_re - tag->len, tag->len);
+	}
+	return ok;
+}
+#endif /* MBEDTLS */
+
 enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 		   const struct byte_array *key, struct byte_array *nonce,
 		   const struct byte_array *aad, struct byte_array *out,
@@ -230,28 +267,139 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 	TRY_EXPECT_PSA(psa_import_key(&attr, key->ptr, key->len, &key_id),
 		       PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
 
-	if (op == DECRYPT) {
-		size_t out_len_re = 0;
-		TRY_EXPECT_PSA(
-			psa_aead_decrypt(key_id, alg, nonce->ptr, nonce->len,
-					 aad->ptr, aad->len, in->ptr, in->len,
-					 out->ptr, out->len, &out_len_re),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-	} else {
-		size_t out_len_re;
-		TRY_EXPECT_PSA(
-			psa_aead_encrypt(key_id, alg, nonce->ptr, nonce->len,
-					 aad->ptr, aad->len, in->ptr, in->len,
-					 out->ptr, (size_t)(in->len + tag->len),
-					 &out_len_re),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-		memcpy(tag->ptr, out->ptr + out_len_re - tag->len, tag->len);
-	}
+	/* Run the operation on the freshly imported volatile key, then destroy
+	   it. This byte-key path is retained for EDHOC and TINYCRYPT; OSCORE
+	   uses the opaque key-id path (aead_with_key_id) instead. */
+	enum err core_result =
+		psa_aead_core(op, key_id, in, nonce, aad, out, tag);
 	TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
+	if (ok != core_result) {
+		return core_result;
+	}
 
 #endif
 	return ok;
 }
+
+#ifdef MBEDTLS
+enum err aead_with_key_id(enum aes_operation op, const struct byte_array *in,
+			  psa_key_id_t key_id, struct byte_array *nonce,
+			  const struct byte_array *aad, struct byte_array *out,
+			  struct byte_array *tag)
+{
+	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, PSA_KEY_ID_NULL,
+		       unexpected_result_from_ext_lib);
+	return psa_aead_core(op, key_id, in, nonce, aad, out, tag);
+}
+
+enum err oscore_derive_aead_key(psa_key_id_t master_secret_id,
+				const struct byte_array *salt,
+				const struct byte_array *info, size_t bits,
+				psa_algorithm_t aead_alg,
+				psa_key_id_t *out_key_id)
+{
+	psa_status_t status;
+	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+
+	*out_key_id = PSA_KEY_ID_NULL;
+
+	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, PSA_KEY_ID_NULL,
+		       unexpected_result_from_ext_lib);
+
+	status = psa_key_derivation_setup(&op, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+	/* Empty salt is omitted; HKDF then uses a string of zeros per RFC 5869,
+	   matching the byte path in hkdf_extract(). */
+	if (salt && salt->ptr && salt->len) {
+		status = psa_key_derivation_input_bytes(
+			&op, PSA_KEY_DERIVATION_INPUT_SALT, salt->ptr,
+			salt->len);
+		if (PSA_SUCCESS != status) {
+			goto err;
+		}
+	}
+	status = psa_key_derivation_input_key(
+		&op, PSA_KEY_DERIVATION_INPUT_SECRET, master_secret_id);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+	status = psa_key_derivation_input_bytes(
+		&op, PSA_KEY_DERIVATION_INPUT_INFO, info->ptr, info->len);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+
+	psa_set_key_usage_flags(&attr,
+				PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+	psa_set_key_algorithm(&attr, aead_alg);
+	psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+	psa_set_key_bits(&attr, bits);
+	psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
+
+	status = psa_key_derivation_output_key(&attr, &op, out_key_id);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+
+	psa_key_derivation_abort(&op);
+	return ok;
+
+err:
+	psa_key_derivation_abort(&op);
+	handle_external_runtime_error((int)status, __FILE__, __LINE__);
+	return unexpected_result_from_ext_lib;
+}
+
+enum err oscore_derive_iv_bytes(psa_key_id_t master_secret_id,
+				const struct byte_array *salt,
+				const struct byte_array *info,
+				struct byte_array *out)
+{
+	psa_status_t status;
+	psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+
+	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, PSA_KEY_ID_NULL,
+		       unexpected_result_from_ext_lib);
+
+	status = psa_key_derivation_setup(&op, PSA_ALG_HKDF(PSA_ALG_SHA_256));
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+	if (salt && salt->ptr && salt->len) {
+		status = psa_key_derivation_input_bytes(
+			&op, PSA_KEY_DERIVATION_INPUT_SALT, salt->ptr,
+			salt->len);
+		if (PSA_SUCCESS != status) {
+			goto err;
+		}
+	}
+	status = psa_key_derivation_input_key(
+		&op, PSA_KEY_DERIVATION_INPUT_SECRET, master_secret_id);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+	status = psa_key_derivation_input_bytes(
+		&op, PSA_KEY_DERIVATION_INPUT_INFO, info->ptr, info->len);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+	status = psa_key_derivation_output_bytes(&op, out->ptr, out->len);
+	if (PSA_SUCCESS != status) {
+		goto err;
+	}
+
+	psa_key_derivation_abort(&op);
+	return ok;
+
+err:
+	psa_key_derivation_abort(&op);
+	handle_external_runtime_error((int)status, __FILE__, __LINE__);
+	return unexpected_result_from_ext_lib;
+}
+#endif /* MBEDTLS */
 
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 static bool

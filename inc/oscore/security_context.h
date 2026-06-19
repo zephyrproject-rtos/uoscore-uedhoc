@@ -20,6 +20,10 @@
 #include "common/byte_array.h"
 #include "common/oscore_edhoc_error.h"
 
+#ifdef OSCORE_PSA_OPAQUE_KEYS
+#include <psa/crypto.h>
+#endif
+
 /* Upper limit of SSN that is allowed by AEAD algorithm (AES-CCM-16-64-128) is 2^23-1, according to RFC 9053 p. 4.2.1.
    Exceeding this value results in constant 4.01 Unauthorized error, so new security context must be established.
    Note that this value is lower than MAX_PIV_FIELD_VALUE, which only defines maximum value that is writable to the SSN/PIV field.
@@ -49,7 +53,15 @@ enum echo_state {
 struct common_context {
 	enum AEAD_algorithm aead_alg;
 	enum hkdf kdf;
+#ifdef OSCORE_PSA_OPAQUE_KEYS
+	/* OSCORE master secret as an opaque PSA derive key; raw bytes never
+	   enter the non-secure domain. Set during oscore_context_init: either
+	   the caller's app-owned key or a temporary volatile key (then reset to
+	   PSA_KEY_ID_NULL once derivation is done). */
+	psa_key_id_t master_secret_id;
+#else
 	struct byte_array master_secret;
+#endif
 	struct byte_array master_salt; /*optional*/
 	struct byte_array id_context; /*optional*/
 	struct byte_array common_iv;
@@ -61,16 +73,26 @@ struct common_context {
 struct sender_context {
 	struct byte_array sender_id;
 	uint8_t sender_id_buf[7];
+#ifdef OSCORE_PSA_OPAQUE_KEYS
+	/* Derived Sender Key as a volatile PSA key handle (secure domain). */
+	psa_key_id_t sender_key_id;
+#else
 	struct byte_array sender_key;
 	uint8_t sender_key_buf[SENDER_KEY_LEN_];
+#endif
 	uint64_t ssn;
 };
 
 /* Recipient Context used to decrypt inbound messages */
 struct recipient_context {
 	struct byte_array recipient_id;
+#ifdef OSCORE_PSA_OPAQUE_KEYS
+	/* Derived Recipient Key as a volatile PSA key handle (secure domain). */
+	psa_key_id_t recipient_key_id;
+#else
 	struct byte_array recipient_key;
 	uint8_t recipient_key_buf[RECIPIENT_KEY_LEN_];
+#endif
 	uint8_t recipient_id_buf[RECIPIENT_ID_BUFF_LEN];
 	struct server_replay_window_t replay_window;
 	uint64_t notification_num;

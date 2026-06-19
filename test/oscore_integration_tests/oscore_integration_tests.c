@@ -76,6 +76,10 @@ void t1_oscore_client_request_response(void)
 			(uint8_t *)&buf_oscore, &buf_oscore_len, &c_client);
 	zassert_equal(r, ok, "Error in coap2oscore!");
 
+#ifndef MBEDTLS
+	/* On MBEDTLS builds the Sender/Recipient keys are opaque PSA handles
+	   whose bytes cannot be read back; correctness is verified end-to-end
+	   by the encrypt/decrypt round-trip below. */
 	zassert_mem_equal__(c_client.sc.sender_key.ptr, T1__SENDER_KEY,
 			    c_client.sc.sender_key.len,
 			    "T1 sender key derivation failed");
@@ -83,6 +87,7 @@ void t1_oscore_client_request_response(void)
 	zassert_mem_equal__(c_client.rc.recipient_key.ptr, T1__RECIPIENT_KEY,
 			    c_client.rc.recipient_key.len,
 			    "T1 recipient key derivation failed");
+#endif
 
 	zassert_mem_equal__(c_client.cc.common_iv.ptr, T1__COMMON_IV,
 			    c_client.cc.common_iv.len,
@@ -282,6 +287,7 @@ void t4_oscore_server_key_derivation(void)
 
 	zassert_equal(r, ok, "Error in oscore_context_init");
 
+#ifndef MBEDTLS
 	zassert_mem_equal__(c_server.sc.sender_key.ptr, T4__SENDER_KEY,
 			    c_server.sc.sender_key.len,
 			    "T4 sender key derivation failed");
@@ -289,6 +295,7 @@ void t4_oscore_server_key_derivation(void)
 	zassert_mem_equal__(c_server.rc.recipient_key.ptr, T4__RECIPIENT_KEY,
 			    c_server.rc.recipient_key.len,
 			    "T4 recipient key derivation failed");
+#endif
 
 	zassert_mem_equal__(c_server.cc.common_iv.ptr, T4__COMMON_IV,
 			    c_server.cc.common_iv.len,
@@ -323,6 +330,7 @@ void t6_oscore_server_key_derivation(void)
 
 	zassert_equal(r, ok, "Error in oscore_context_init");
 
+#ifndef MBEDTLS
 	zassert_mem_equal__(c_server.sc.sender_key.ptr, T6__SENDER_KEY,
 			    c_server.sc.sender_key.len,
 			    "T6 sender key derivation failed");
@@ -330,6 +338,7 @@ void t6_oscore_server_key_derivation(void)
 	zassert_mem_equal__(c_server.rc.recipient_key.ptr, T6__RECIPIENT_KEY,
 			    c_server.rc.recipient_key.len,
 			    "T6 recipient key derivation failed");
+#endif
 
 	zassert_mem_equal__(c_server.cc.common_iv.ptr, T6__COMMON_IV,
 			    c_server.cc.common_iv.len,
